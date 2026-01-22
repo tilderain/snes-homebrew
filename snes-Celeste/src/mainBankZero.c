@@ -4,9 +4,9 @@
 #include <inttypes.h>
 //#include <STDINT.H> // STDINT is cursed on wdc816cc
 
-#include <STDIO.H>
-#include <STRING.H>
-#include <STDARG.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <limits.h>
 
@@ -1132,6 +1132,7 @@ static void buildSpriteIfDirty(uint8_t index, void (*builder)(uint8_t))
 
 static void processObject(uint8_t index)
 {
+    return;
     OBJ_DATA *obj = &GLOBAL_OBJList[index];
     switch (obj->eType)
     {

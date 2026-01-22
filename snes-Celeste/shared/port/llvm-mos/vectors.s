@@ -37,7 +37,7 @@ COP:
     pha
     lda $07
     pha
-    jsr snesXC_cop
+    jsl snesXC_cop
     ; Restore zero page registers
     pla
     sta $07
@@ -89,7 +89,7 @@ BRK:
     pha
     lda $07
     pha
-    jsr snesXC_brk
+    jsl snesXC_brk
     ; Restore zero page registers
     pla
     sta $07
@@ -141,7 +141,7 @@ ABORT:
     pha
     lda $07
     pha
-    jsr snesXC_abort
+    jsl snesXC_abort
     ; Restore zero page registers
     pla
     sta $07
@@ -195,7 +195,7 @@ NMI:
     pha
     ; Acknowledge NMI interrupt
     lda $4210       ; Read NMI status to acknowledge
-    jsr snesXC_nmi
+    jsl snesXC_nmi
     ; Restore zero page registers
     pla
     sta $07
@@ -249,7 +249,7 @@ IRQ:
     pha
     ; Acknowledge IRQ interrupt
     lda $4211       ; Read IRQ status to acknowledge
-    jsr snesXC_irq
+    jsl snesXC_irq
     ; Restore zero page registers
     pla
     sta $07

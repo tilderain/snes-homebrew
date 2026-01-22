@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-TCC816 (pvsneslib) compilation wrapper script
-Copies source files to build directory and runs TCC816 from there
+TCC816 (pvsneslib) compilation wrapper script - Linux/Cross-Platform Fix
+Copies source files to build directory and runs TCC816 -> 816-opt -> Constify -> WLA
 """
 
 import os
@@ -9,340 +9,304 @@ import sys
 import subprocess
 import argparse
 import shutil
+import platform
+
+def get_executable_name(name):
+    """Returns the executable name with .exe extension if on Windows"""
+    if platform.system() == "Windows":
+        return f"{name}.exe"
+    return name
+
+def run_command(cmd, cwd=None, stdout=None):
+    """Helper to run subprocess commands with error handling"""
+    # If stdout is a file object, pass it directly
+    try:
+        if stdout and hasattr(stdout, 'write'):
+            result = subprocess.run(cmd, stdout=stdout, stderr=subprocess.PIPE, text=True, cwd=cwd)
+        else:
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+
+        if result.returncode != 0:
+            print(f"Error executing: {' '.join(cmd)}")
+            if not (stdout and hasattr(stdout, 'write')):
+                print("STDOUT:", result.stdout)
+            print("STDERR:", result.stderr)
+            sys.exit(result.returncode)
+        return result
+    except Exception as e:
+        print(f"Exception executing {' '.join(cmd)}: {e}")
+        sys.exit(1)
 
 def main():
     print("TCC816 wrapper starting...")
-    # Set up environment variables (similar to devEnv.bat)
-    os.environ["DEV_KIT_SNES_PATH"] = r"C:\pvsneslib\devkitsnes\bin"
-    os.environ["C_INC_PATH"] = r"C:\pvsneslib\devkitsnes\include"
-    os.environ["TOOLS_PATH"] = r"C:\pvsneslib\devkitsnes\tools"
-    os.environ["PVSNESLIB_HOME"] = r"C:\pvsneslib"
     
-    # Update PATH
-    os.environ["PATH"] = os.environ["DEV_KIT_SNES_PATH"] + os.pathsep + os.environ["PATH"]
-    os.environ["PATH"] = os.environ["C_INC_PATH"] + os.pathsep + os.environ["PATH"]
-    os.environ["PATH"] = os.environ["TOOLS_PATH"] + os.pathsep + os.environ["PATH"]
+    # 1. Setup Paths
+    pvsneslib_home = os.environ.get("PVSNESLIB_HOME")
+    if not pvsneslib_home:
+        if os.path.exists("/opt/pvsneslib"):
+            pvsneslib_home = "/opt/pvsneslib"
+        else:
+            print("Error: PVSNESLIB_HOME environment variable is not set.")
+            sys.exit(1)
+
+    devkit_snes_path = os.path.join(pvsneslib_home, "devkitsnes", "bin")
+    c_inc_path = os.path.join(pvsneslib_home, "devkitsnes", "include")
+    tools_path = os.path.join(pvsneslib_home, "devkitsnes", "tools")
+
+    os.environ["PVSNESLIB_HOME"] = pvsneslib_home
+    os.environ["PATH"] = devkit_snes_path + os.pathsep + \
+                         c_inc_path + os.pathsep + \
+                         tools_path + os.pathsep + \
+                         os.environ["PATH"]
     
-    # Get the current working directory (where make was called from)
     work_dir = os.getcwd()
-    
-    # Create build directory
     build_dir = os.path.join(work_dir, "build")
     os.makedirs(build_dir, exist_ok=True)
     
-    # Parse arguments
+    # 2. Parse Arguments
     parser = argparse.ArgumentParser(description='TCC816 compilation wrapper')
-    parser.add_argument('-c', '--compile', action='store_true', help='Compile only')
-    parser.add_argument('-l', '--linker', help='Linker script (ignored for TCC816)')
-    parser.add_argument('-O', '--optimize', help='Optimization level')
-    parser.add_argument('-D', '--debug', help='Debug level')
-    parser.add_argument('-V', '--verbose', help='Verbose level')
-    parser.add_argument('-r', '--result', help='Result directory')
     parser.add_argument('-o', '--output', help='Output file')
+    parser.add_argument('-V', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('sources', nargs='*', help='Source files')
-    
-    # Parse known args (ignore unknown ones for now)
     args, unknown = parser.parse_known_args()
     
-    # Copy source files to build directory - flatten all paths to just filenames
-    copied_sources = []
+    # 3. Locate Tools
+    tcc816_bin = os.path.join(devkit_snes_path, get_executable_name("816-tcc"))
+    opt816_bin = os.path.join(tools_path, get_executable_name("816-opt"))
+    constify_bin = os.path.join(tools_path, get_executable_name("constify"))
+
+    # Validate tools exist
+    for tool in [tcc816_bin, opt816_bin, constify_bin]:
+        if not os.path.exists(tool):
+            print(f"Error: Tool not found at {tool}")
+            sys.exit(1)
+
+    # 4. Copy Sources
+    c_sources = [] # Files to run through C pipeline
+    asm_sources = [] # Pure ASM files to pass to linker directly
     
-    # Process both known sources and unknown arguments that might be source files
-    all_sources = args.sources + [arg for arg in unknown if not arg.startswith('-') and arg.endswith('.c')]
+    # Collect all sources from args and unknown args
+    raw_sources = args.sources + [arg for arg in unknown if not arg.startswith('-') and (arg.endswith('.c') or arg.endswith('.asm'))]
     
-    for source in all_sources:
-        # Skip if this looks like an output file path
-        if source.endswith('.o') and 'build/' in source:
-            continue
-            
-        # Skip if this is a directory (like ../shared/src)
-        if os.path.isdir(os.path.normpath(os.path.join(work_dir, source))):
-            continue
-            
-        # Handle relative paths properly using os.path.normpath
-        source_path = os.path.normpath(os.path.join(work_dir, source))
-            
-        if os.path.exists(source_path) and os.path.isfile(source_path):
-            # Always flatten to just the filename in build directory
+    for source in raw_sources:
+        if 'build' in source and source.endswith('.o'): continue # Skip build artifacts
+        
+        full_source_path = os.path.normpath(os.path.join(work_dir, source))
+        
+        if os.path.isfile(full_source_path):
             dest_filename = os.path.basename(source)
             dest_path = os.path.join(build_dir, dest_filename)
+            shutil.copy2(full_source_path, dest_path)
             
-            # Copy the file
-            shutil.copy2(source_path, dest_path)
-            copied_sources.append(dest_filename)  # Use just filename for TCC816
-            print(f"Copied: {source} -> {dest_path}")
+            if source.endswith('.c'):
+                c_sources.append(dest_filename)
+            elif source.endswith('.asm'):
+                asm_sources.append(dest_filename)
+            print(f"Copied: {source}")
         else:
-            print(f"Warning: Source file not found: {source_path}")
-    
-    # Copy header files from shared/src to build directory for TCC816
+            print(f"Warning: Source file not found: {full_source_path}")
+
+    # Copy standard headers
     header_files = ["snes_regs_xc.h", "int_snes_xc.h"]
     for header_file in header_files:
-        header_path = os.path.normpath(os.path.join(work_dir, "shared", "src", header_file))
-        if os.path.exists(header_path):
-            dest_path = os.path.join(build_dir, header_file)
-            shutil.copy2(header_path, dest_path)
-            print(f"Copied: {header_file} -> {dest_path}")
-        else:
-            print(f"Warning: {header_file} not found at {header_path}")
-    
-    # Build TCC816 command
-    tcc816_path = os.path.join(os.environ["DEV_KIT_SNES_PATH"], "816-tcc.exe")
-    cmd = [tcc816_path]
-    
-    # Add include paths for pvsneslib
-    cmd.extend(["-I" + os.path.join(os.environ["PVSNESLIB_HOME"], "include")])
-    cmd.extend(["-I" + os.environ["C_INC_PATH"]])
-    
-    # Add the tcc816 port directory to include path (for inttypes.h and other port-specific headers)
-    port_dir = os.path.dirname(os.path.abspath(__file__))
-    cmd.extend(["-I" + port_dir])
-    
-    # Process include path arguments from Makefile
+        h_path = os.path.join(work_dir, "..", "shared", "src", header_file)
+        if os.path.exists(h_path):
+            shutil.copy2(h_path, os.path.join(build_dir, header_file))
+
+    # 5. Build Include Flags
+    include_flags = ["-I" + os.path.join(pvsneslib_home, "pvsneslib", "include"), "-I" + c_inc_path]
     i = 0
     while i < len(unknown):
         if unknown[i] == "-I" and i + 1 < len(unknown):
-            # Convert relative paths to absolute paths
-            include_path = os.path.normpath(os.path.join(work_dir, unknown[i + 1]))
-            cmd.extend(["-I", include_path])
+            include_flags.extend(["-I", os.path.normpath(os.path.join(work_dir, unknown[i + 1]))])
             i += 2
         elif unknown[i].startswith("-I"):
-            # Handle -Ipath format (no space)
-            include_path = os.path.normpath(os.path.join(work_dir, unknown[i][2:]))
-            cmd.extend(["-I", include_path])
+            include_flags.extend(["-I", os.path.normpath(os.path.join(work_dir, unknown[i][2:]))])
             i += 1
         else:
             i += 1
-    
-    # Define TCC816 macro
-    cmd.extend(["-D__TCC816__"])
-    
-    # Add arguments
-    if args.optimize:
-        # TCC816 doesn't have standard optimization flags, skip for now
-        pass
-    
-    if args.debug:
-        # TCC816 doesn't have standard debug flags, skip for now
-        pass
-    
-    if args.verbose:
-        cmd.extend(["-v"])
-    
-    # Add compile-only flag
-    cmd.extend(["-c"])
-    
-    # Add output file if specified
-    if args.output:
-        cmd.extend(["-o", os.path.basename(args.output)])
-    
-    # TCC816 doesn't support multiple files with -c, so we need to compile them separately
-    if len(copied_sources) > 1:
-        # Compile each source file separately
-        for source in copied_sources:
-            single_cmd = cmd[:-1]  # Remove the -c flag for individual compiles
-            single_cmd.extend(["-c", source])
-            
-            print("Running:", " ".join(single_cmd))
-            
-            try:
-                result = subprocess.run(single_cmd, capture_output=True, text=True, cwd=build_dir)
-                
-                if result.returncode != 0:
-                    print("STDOUT:", result.stdout)
-                    print("STDERR:", result.stderr)
-                    sys.exit(result.returncode)
-                    
-            except Exception as e:
-                print("Error running TCC816:", e)
-                sys.exit(1)
+
+    # 6. Compilation Pipeline (C -> PS -> ASP -> ASM)
+    generated_asm_files = []
+
+    for c_file in c_sources:
+        base_name = os.path.splitext(c_file)[0]
+        ps_file = f"{base_name}.ps"
+        asp_file = f"{base_name}.asp"
+        asm_file = f"{base_name}.asm"
+
+        print(f"--- Processing {c_file} ---")
+
+        # Step A: TCC816 (Compile to .ps)
+        # Note: We rely on default CFLAGS logic roughly similar to makefile
+        # Adding -D__TCC816__ is standard
+        tcc_cmd = [tcc816_bin] + include_flags + ["-D__TCC816__", "-c", c_file, "-o", ps_file]
+        print(f"1. Compiling: {c_file} -> {ps_file}")
+        run_command(tcc_cmd, cwd=build_dir)
+
+        # Step B: 816-opt (Optimize .ps -> .asp)
+        # 816-opt reads input file and outputs to STDOUT
+        print(f"2. Optimizing: {ps_file} -> {asp_file}")
+        opt_cmd = [opt816_bin, ps_file]
+        with open(os.path.join(build_dir, asp_file), 'w') as f_out:
+            run_command(opt_cmd, cwd=build_dir, stdout=f_out)
+
+        # Step C: Constify (Move constants, C + ASP -> ASM)
+        print(f"3. Constifying: {c_file} + {asp_file} -> {asm_file}")
+        ctf_cmd = [constify_bin, c_file, asp_file, asm_file]
+        run_command(ctf_cmd, cwd=build_dir)
         
-        print("TCC816 compilation completed successfully")
+        generated_asm_files.append(asm_file)
         
-        # Convert assembly files to object files and link
-        asm_files = [f for f in os.listdir(build_dir) if f.endswith('.o') and not f.endswith('.obj')]
-        if asm_files and not args.output:
-            print("Converting assembly to object files...")
-            convert_and_link(build_dir, asm_files)
-        
-        return  # Exit early since we handled multiple files
+        # Cleanup intermediate files
+        try:
+            os.remove(os.path.join(build_dir, ps_file))
+            os.remove(os.path.join(build_dir, asp_file))
+        except OSError:
+            pass
+
+    # 7. Convert ASM to OBJ and Link
+    # Combine generated ASM files from C and pure ASM files copied over
+    all_asm_to_process = generated_asm_files + asm_sources
     
-    # Single file compilation (original behavior)
-    cmd.append(copied_sources[0])
-    
-    # Print the command for debugging
-    print("Running:", " ".join(cmd))
-    print(f"Working directory: {build_dir}")
-    
-    # Run TCC816 from the build directory
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=build_dir)
-        
-        if result.returncode != 0:
-            print("STDOUT:", result.stdout)
-            print("STDERR:", result.stderr)
-            sys.exit(result.returncode)
-        
-        print("TCC816 compilation completed successfully")
-        
-        # Convert assembly files to object files and link
-        asm_files = [f for f in os.listdir(build_dir) if f.endswith('.o') and not f.endswith('.obj')]
-        if asm_files and not args.output:
-            print("Converting assembly to object files...")
-            convert_and_link(build_dir, asm_files)
-        
-    except Exception as e:
-        print("Error running TCC816:", e)
+    if all_asm_to_process:
+        print("--- Assembly and Linking ---")
+        convert_and_link(build_dir, all_asm_to_process, devkit_snes_path, pvsneslib_home)
+    else:
+        print("No source files processed.")
         sys.exit(1)
 
-def convert_and_link(build_dir, asm_files):
+def convert_and_link(build_dir, asm_files, devkit_path, pvsneslib_home):
     """Convert assembly files to object files and link into a SNES ROM"""
     try:
-        # Copy header file from pvsneslib examples
+        # Setup Header
         port_dir = os.path.dirname(os.path.abspath(__file__))
         hdr_source = os.path.join(port_dir, "hdr.asm")
         hdr_dest = os.path.join(build_dir, "hdr.asm")
         
         if os.path.exists(hdr_source):
             shutil.copy2(hdr_source, hdr_dest)
-            print(f"Copied header: {hdr_source} -> {hdr_dest}")
         else:
-            # Fallback to generated header if pvsneslib header not found
-            hdr_content = ''';==LoRom==                      ; We'll get to HiRom some other time.
+            create_default_header(hdr_dest)
+        
+        wla_bin = get_executable_name("wla-65816")
+        wla_path = os.path.join(devkit_path, wla_bin)
+        
+        obj_files = []
+        
+        # 1. Assemble Header
+        hdr_obj = "hdr.obj"
+        hdr_cmd = [wla_path, "-d", "-s", "-x", "-o", hdr_obj, "hdr.asm"]
+        print(f"Assembling header...")
+        run_command(hdr_cmd, cwd=build_dir)
+        obj_files.append(hdr_obj)
+        
+        # 2. Assemble Sources
+        for asm_file in asm_files:
+            # Avoid processing hdr.asm twice if it was in sources list
+            if asm_file == "hdr.asm": continue
+            
+            obj_file = os.path.splitext(asm_file)[0] + '.obj'
+            # -d: disable calculation ability (prevents specific WLA errors with labels)
+            # -s: symbols
+            # -x: eXport
+            asm_cmd = [wla_path, "-d", "-s", "-x", "-o", obj_file, asm_file]
+            
+            print(f"Assembling {asm_file} -> {obj_file}")
+            run_command(asm_cmd, cwd=build_dir)
+            obj_files.append(obj_file)
+        
+        # 3. Link
+        if obj_files:
+            link_rom(build_dir, obj_files, devkit_path, pvsneslib_home)
+            
+    except Exception as e:
+        print(f"Error during conversion and linking: {e}")
+        sys.exit(1)
 
-.MEMORYMAP                      ; Begin describing the system architecture.
-  SLOTSIZE $8000                ; The slot is $8000 bytes in size. More details on slots later.
-  DEFAULTSLOT 0                 ; There's only 1 slot in SNES, there are more in other consoles.
-  SLOT 0 $8000                  ; Defines Slot 0's starting address.
+def link_rom(build_dir, obj_files, devkit_path, pvsneslib_home):
+    """Link object files into a SNES ROM using WLA-65816"""
+    try:
+        linkfile_path = os.path.join(build_dir, "linkfile")
+        # Defaulting to LoROM_SlowROM as per common defaults, 
+        # normally strictly controlled by Makefile HIROM/FASTROM flags
+        lib_dir = os.path.join(pvsneslib_home, "pvsneslib", "lib", "LoROM_SlowROM")
+        
+        with open(linkfile_path, 'w') as f:
+            f.write("[objects]\n")
+            for obj_file in obj_files:
+                f.write(f"{obj_file}\n")
+            
+            # Add pvsneslib library objects
+            if os.path.exists(lib_dir):
+                for lib_file in os.listdir(lib_dir):
+                    if lib_file.endswith('.obj'):
+                        full_lib_path = os.path.join(lib_dir, lib_file).replace("\\", "/")
+                        f.write(f"{full_lib_path}\n")
+        
+        wlalink_bin = get_executable_name("wlalink")
+        wlalink_path = os.path.join(devkit_path, wlalink_bin)
+        
+        rom_filename = "main.sfc"
+        link_cmd = [wlalink_path, "-d", "-s", "-v", "-A", "-c", "-L", lib_dir, "linkfile", rom_filename]
+        
+        print(f"Linking... -> {rom_filename}")
+        run_command(link_cmd, cwd=build_dir)
+        
+        print(f"SUCCESS! ROM created at: {os.path.join(build_dir, rom_filename)}")
+            
+    except Exception as e:
+        print(f"Error during linking: {e}")
+        sys.exit(1)
+
+def create_default_header(path):
+    """Writes the default SNES header if one isn't found"""
+    content = ''';==LoRom==
+.MEMORYMAP
+  SLOTSIZE $8000
+  DEFAULTSLOT 0
+  SLOT 0 $8000
   SLOT 1 $0 $2000
   SLOT 2 $2000 $E000
   SLOT 3 $0 $10000
-.ENDME          ; End MemoryMap definition
-
-.ROMBANKSIZE $8000              ; Every ROM bank is 32 KBytes in size
-.ROMBANKS 8                     ; 2 Mbits - Tell WLA we want to use 8 ROM Banks
-
+.ENDME
+.ROMBANKSIZE $8000
+.ROMBANKS 8
 .SNESHEADER
-  ID "SNES"                     ; 1-4 letter string, just leave it as "SNES"
-
-  NAME "TCC816 TEST ROM      "  ; Program Title - can't be over 21 bytes,
-  ;    "123456789012345678901"  ; use spaces for unused bytes of the name.
-
+  ID "SNES"
+  NAME "TCC816 TEST ROM      "
   SLOWROM
   LOROM
-
-  CARTRIDGETYPE $00             ; $00=ROM, $01=ROM+RAM, $02=ROM+SRAM, $03=ROM+DSP1, $04=ROM+RAM+DSP1, $05=ROM+SRAM+DSP1, $13=ROM+Super FX
-  ROMSIZE $08                   ; $08=2 Megabits, $09=4 Megabits,$0A=8 Megabits,$0B=16 Megabits,$0C=32 Megabits
-  SRAMSIZE $00                  ; $00=0 kilobits, $01=16 kilobits, $02=32 kilobits, $03=64 kilobits
-  COUNTRY $01                   ; $01= U.S., $00=Japan, $02=Europe, $03=Sweden/Scandinavia, $04=Finland, $05=Denmark, $06=France, $07=Netherlands, $08=Spain, $09=Germany, $0A=Italy, $0B=China, $0C=Indonesia, $0D=Korea
-  LICENSEECODE $00              ; Just use $00
-  VERSION $00                   ; $00 = 1.00, $01 = 1.01, etc.
+  CARTRIDGETYPE $00
+  ROMSIZE $08
+  SRAMSIZE $00
+  COUNTRY $01
+  LICENSEECODE $00
+  VERSION $00
 .ENDSNES
-
-.SNESNATIVEVECTOR               ; Define Native Mode interrupt vector table
+.SNESNATIVEVECTOR
   COP EmptyHandler
   BRK EmptyHandler
   ABORT EmptyHandler
   NMI VBlank
   IRQ EmptyHandler
 .ENDNATIVEVECTOR
-
-.SNESEMUVECTOR                  ; Define Emulation Mode interrupt vector table
+.SNESEMUVECTOR
   COP EmptyHandler
   ABORT EmptyHandler
   NMI EmptyHandler
-  RESET tcc__start                   ; where execution starts
+  RESET tcc__start
   IRQBRK EmptyHandler
 .ENDEMUVECTOR
-
 EmptyHandler:
   rti
-
 VBlank:
   rti
-
 .BANK 0 SLOT 0
 .ORG $0000
 '''
-            hdr_path = os.path.join(build_dir, "hdr.asm")
-            with open(hdr_path, 'w') as f:
-                f.write(hdr_content)
-        
-        # Convert each assembly file to object file
-        wla_path = os.path.join(os.environ["DEV_KIT_SNES_PATH"], "wla-65816.exe")
-        obj_files = []
-        
-        # First assemble hdr.asm
-        hdr_obj = "hdr.obj"
-        hdr_cmd = [wla_path, "-d", "-s", "-x", "-o", hdr_obj, "hdr.asm"]
-        print(f"Assembling hdr.asm...")
-        result = subprocess.run(hdr_cmd, capture_output=True, text=True, cwd=build_dir)
-        if result.returncode == 0:
-            obj_files.append(hdr_obj)
-            print("hdr.asm assembled successfully")
-        else:
-            print("hdr.asm assembly failed:", result.stderr)
-        
-        
-        for asm_file in asm_files:
-            obj_file = asm_file.replace('.o', '.obj')
-            asm_cmd = [wla_path, "-d", "-s", "-x", "-o", obj_file, asm_file]
-            
-            print(f"Assembling {asm_file}...")
-            result = subprocess.run(asm_cmd, capture_output=True, text=True, cwd=build_dir)
-            
-            if result.returncode != 0:
-                print(f"Assembly STDOUT: {result.stdout}")
-                print(f"Assembly STDERR: {result.stderr}")
-                print(f"Failed to assemble {asm_file}")
-                continue
-                
-            obj_files.append(obj_file)
-        
-        if obj_files:
-            print("Linking object files to create ROM...")
-            link_rom(build_dir, obj_files)
-        else:
-            print("No object files created successfully")
-            
-    except Exception as e:
-        print(f"Error during conversion and linking: {e}")
-
-def link_rom(build_dir, obj_files):
-    """Link object files into a SNES ROM using WLA-65816"""
-    try:
-        # Create linkfile
-        linkfile_path = os.path.join(build_dir, "linkfile")
-        with open(linkfile_path, 'w') as f:
-            f.write("[objects]\n")
-            for obj_file in obj_files:
-                f.write(f"{obj_file}\n")
-            
-            
-            # Add pvsneslib library objects
-            lib_dir = os.path.join(os.environ["PVSNESLIB_HOME"], "pvsneslib", "lib", "LoROM_SlowROM")
-            if os.path.exists(lib_dir):
-                for lib_file in os.listdir(lib_dir):
-                    if lib_file.endswith('.obj'):
-                        f.write(f"{lib_dir}/{lib_file}\n")
-        
-        # Link using wlalink
-        wlalink_path = os.path.join(os.environ["DEV_KIT_SNES_PATH"], "wlalink.exe")
-        rom_filename = "mainBankZero_tcc816.sfc"
-        link_cmd = [wlalink_path, "-d", "-s", "-v", "-A", "-c", "-L", lib_dir, "linkfile", rom_filename]
-        
-        print("Linking command:", " ".join(link_cmd))
-        result = subprocess.run(link_cmd, capture_output=True, text=True, cwd=build_dir)
-        
-        if result.returncode != 0:
-            print("Link STDOUT:", result.stdout)
-            print("Link STDERR:", result.stderr)
-            print("Linking failed, but object files were created successfully")
-        else:
-            print(f"ROM created successfully: {rom_filename}")
-            
-    except Exception as e:
-        print(f"Error during linking: {e}")
-        print("Object files were created successfully")
+    with open(path, 'w') as f:
+        f.write(content)
 
 if __name__ == "__main__":
     main()

@@ -2,7 +2,7 @@
 //however inttypes.h uses typedefs
 #ifndef __CUSTOM_LIBFIXMATH_DEFINES_H__
 #define __CUSTOM_LIBFIXMATH_DEFINES_H__
-#include <inttypes.h>
+#include <stdint.h>
 
 
 #ifdef __WDC816CC__

@@ -8,7 +8,7 @@ extern "C"
 
 
 #include "defines.h"
-#include <inttypes.h>
+#include <stdint.h>
 
 typedef uint32_t fract32_t;
 

@@ -1,7 +1,7 @@
 #ifndef FIXEDPOINT_H
 #define FIXEDPOINT_H
 
-#include <inttypes.h>
+#include <stdint.h>
 
 #ifndef __WDC816CC__
 

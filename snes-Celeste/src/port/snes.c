@@ -5,8 +5,8 @@
 #include "../../shared/src/initsnes.h"
 //Thank you llvm mos
 //making me micro manage where my graphics data in ROM
-#ifdef __SNESXC_16BIT_POINTERS__
-#pragma clang section rodata="rom_bank_1"
+#if defined(__SNESXC_16BIT_POINTERS__) 
+
 #endif
 #include "../clouds.h"
 #include "sprite_data.h"
@@ -19,8 +19,8 @@
 //So it'll need to be split into 3 banks
 //13 ish levels per bank
 #pragma SECTION CONST=CEL_K_00
-#ifdef __SNESXC_16BIT_POINTERS__
-#pragma clang section rodata="rom_bank_2"
+#if defined(__SNESXC_16BIT_POINTERS__) 
+
 #endif
 #include "../levelDat/tilemap_level1.h"
 #include "../levelDat/tilemap_level2.h"
@@ -35,8 +35,8 @@
 #include "../levelDat/tilemap_level11.h"
 #include "../levelDat/tilemap_level12.h"
 #pragma SECTION CONST=CEL_K_01
-#ifdef __SNESXC_16BIT_POINTERS__
-#pragma clang section rodata="rom_bank_3"
+#if defined(__SNESXC_16BIT_POINTERS__) 
+
 #endif
 #include "../levelDat/tilemap_level13.h"
 #include "../levelDat/tilemap_level14.h"
@@ -51,8 +51,8 @@
 #include "../levelDat/tilemap_level23.h"
 #include "../levelDat/tilemap_level24.h"
 #pragma SECTION CONST=CEL_K_02
-#ifdef __SNESXC_16BIT_POINTERS__
-#pragma clang section rodata="rom_bank_4"
+#if defined(__SNESXC_16BIT_POINTERS__) 
+
 #endif
 #include "../levelDat/tilemap_level25.h"
 #include "../levelDat/tilemap_level26.h"
@@ -62,8 +62,8 @@
 #include "../levelDat/tilemap_level30.h"
 #include "../levelDat/tilemap_level31.h"
 #include "../levelDat/tilemap_level32.h"
-#ifdef __SNESXC_16BIT_POINTERS__
-#pragma clang section rodata="rom_bank_0"
+#if defined(__SNESXC_16BIT_POINTERS__) 
+
 #endif
 #pragma SECTION CONST=CONST
 
@@ -246,7 +246,8 @@ static void releaseExtraSpriteRange(uint8_t baseSlot, uint8_t count)
     if (end > PORT_OAM_ENTRY_COUNT) {
         end = PORT_OAM_ENTRY_COUNT;
     }
-    for (uint16_t slot = baseSlot; slot < end; ++slot) {
+	uint16_t slot;
+    for ( slot = baseSlot; slot < end; ++slot) {
         GLOBAL_OAMCopy.arr.OAMArray[slot].OBJY = 240;
     }
 
@@ -313,7 +314,8 @@ static bool writeBreakableWallSprite(uint8_t index, OBJ_DATA *obj)
 
     obj->extraSpriteCount = PORT_BREAKABLE_WALL_EXTRAS_PER_OBJECT;
     uint8_t extraBase = obj->extraSpriteBase;
-    for (uint8_t extra = 0; extra < PORT_BREAKABLE_WALL_EXTRAS_PER_OBJECT; ++extra) {
+	uint8_t extra;
+    for ( extra = 0; extra < PORT_BREAKABLE_WALL_EXTRAS_PER_OBJECT; ++extra) {
         uint8_t slot = (uint8_t)(extraBase + extra);
         if (slot >= PORT_OAM_ENTRY_COUNT) {
             break;
@@ -364,8 +366,8 @@ static bool writeMonumentSprite(uint8_t index, OBJ_DATA *obj)
         PORT_MONUMENT_OFFSET_DOWN,
         PORT_MONUMENT_OFFSET_DOWN
     };
-
-    for (uint8_t extra = 0; extra < PORT_MONUMENT_EXTRA_SPRITES; ++extra) {
+uint8_t extra;
+    for ( extra = 0; extra < PORT_MONUMENT_EXTRA_SPRITES; ++extra) {
         uint8_t slot = (uint8_t)(baseSlot + extra);
         if (slot >= PORT_OAM_ENTRY_COUNT) {
             break;
@@ -546,8 +548,8 @@ static bool writeFlyingBerrySprite(uint8_t index, OBJ_DATA *obj)
     } else if (delta > 0) {
         wingTile = PORT_FLYING_BERRY_WING_TILE_DOWN;
     }
-
-    for (uint8_t offset = 0; offset < PORT_FLYING_BERRY_EXTRA_SPRITES; ++offset) {
+uint8_t offset;
+    for ( offset = 0; offset < PORT_FLYING_BERRY_EXTRA_SPRITES; ++offset) {
         uint8_t slot = (uint8_t)(baseSlot + offset);
         if (slot >= PORT_OAM_ENTRY_COUNT) {
             break;
@@ -971,7 +973,8 @@ void port_LoadRoomData(uint16_t roomID) {
 void LoadInitialGraphics(void) {
     snesXC_setDataBank(BANK_01);
     // Initialize BG1 tilemap and palette (in bank 0 - no switching needed)
-    for (uint16_t i = 0; i < sizeof(GLBOAL_M0BG1TileMap); i++) {
+uint16_t i;
+    for ( i = 0; i < sizeof(GLBOAL_M0BG1TileMap); i++) {
         GLBOAL_M0BG1TileMap[i] = 0x20;
     }
     s_altPaletteApplied = false;
@@ -1063,7 +1066,8 @@ void port_beginSpriteBuild(const struct sPlayerData *playerObj)
 
 void port_finishSpriteBuild(void)
 {
-    for (uint8_t slot = s_nextExtraSprite; slot < s_previousMaxExtraForCleanup; ++slot) {
+uint8_t slot;
+    for ( slot = s_nextExtraSprite; slot < s_previousMaxExtraForCleanup; ++slot) {
         GLOBAL_OAMCopy.arr.OAMArray[slot].OBJY = 240;
     }
     s_maxExtraSpriteUsed = s_nextExtraSprite;
@@ -1461,14 +1465,16 @@ void port_vblank(void)
 void port_resetSprites(void)
 {
     //Clear all sprites
-    for (uint8_t i = 0; i < 128; i++) {
-        GLOBAL_OAMCopy.arr.OAMArray[i].OBJY = 240;
+uint8_t i;
+    for ( i = 0; i < 128; i++) {
+    //    GLOBAL_OAMCopy.arr.OAMArray[i].OBJY = 240;
     }
 
     s_nextExtraSprite = PORT_EXTRA_SPRITE_START;
     s_maxExtraSpriteUsed = PORT_EXTRA_SPRITE_START;
-    for (uint8_t slot = PORT_EXTRA_SPRITE_START; slot < PORT_OAM_ENTRY_COUNT; ++slot) {
-        GLOBAL_OAMCopy.arr.OAMArray[slot].OBJY = 240;
+uint8_t slot;
+    for ( slot = PORT_EXTRA_SPRITE_START; slot < PORT_OAM_ENTRY_COUNT; ++slot) {
+    //    GLOBAL_OAMCopy.arr.OAMArray[slot].OBJY = 240;
     }
     GLOBAL_OAMCopy.Names.OBJ000X = 0;
     GLOBAL_OAMCopy.Names.OBJ000Y = 0x00;
