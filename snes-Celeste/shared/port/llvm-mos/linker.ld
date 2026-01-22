@@ -112,7 +112,7 @@ SECTIONS {
     } > rom_bank_0_vec
 
     /DISCARD/ : {
-        *(.comment) *(.note*) *(.symtab) *(.strtab) *(.llvm_addrsig)
+        *(.comment) *(.note*) *(.llvm_addrsig)
     }
 }
 

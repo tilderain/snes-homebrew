@@ -104,7 +104,7 @@ ifeq ($(COMPILER_LOWER),llvm-mos)
 	NM = $(LLVM_MOS_BIN_DIR)/llvm-nm
 	OBJCOPY = $(LLVM_MOS_BIN_DIR)/llvm-objcopy
 
-	CCFLAGS = -mcpu=mosw65816 \
+	CCFLAGS = -g -mcpu=mosw65816 \
 		      -I"$(LLVM_MOS_PLATFORM_ROOT)/common/include" \
 	          -I"$(LLVM_MOS_PLATFORM_ROOT)/snes/include" \
 	          -I"$(SHARED_SRC_DIR)" -Iinclude -Oz -flto -fnonreentrant -ffast-math \
